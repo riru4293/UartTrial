@@ -47,6 +47,7 @@ add_executable(UartTrial ${CMAKE_CURRENT_LIST_DIR}/main.c)
 # Add the standard library to the build
 target_link_libraries(UartTrial
     PRIVATE pico_stdlib
+    PRIVATE hardware_uart
     PRIVATE FreeRTOS
 )
 
