@@ -1,8 +1,10 @@
+#include <string.h>
 #include <pico/stdlib.h>
 #include <hardware/uart.h>
 #include <hardware/irq.h>
 #include <FreeRTOS.h>
 #include <task.h>
+#include <queue.h>
 
 #define GP_LED (25U)
 #define UART_TX_PIN (0U)
@@ -13,6 +15,13 @@
 #define STOP_BITS 1
 #define PARITY UART_PARITY_NONE
 
+typedef struct
+{
+    uint16_t cmd;
+    uint16_t len;
+    uint8_t data[100U];
+} stUartCmd;
+
 static void blinkTask(void *nouse);
 static void uartTask(void *nouse);
 static void onUartRx(void);
@@ -21,6 +30,7 @@ static const uint16_t C_TASK_INTERVAL = 500U;
 static TaskHandle_t gBlinkTask = NULL;
 static TaskHandle_t gUartTask = NULL;
 static bool gLedOn = true;
+static volatile QueueHandle_t gQueue = NULL;
 
 int main(void)
 {
@@ -52,6 +62,10 @@ static void blinkTask(void *nouse)
 
 static void uartTask(void *nouse)
 {
+    const UBaseType_t C_QUE_ITEM_QTY = 10U;
+    const UBaseType_t C_QUE_ITEM_SIZE = sizeof(stUartCmd);
+
+    gQueue = xQueueCreate(C_QUE_ITEM_QTY, C_QUE_ITEM_SIZE);
     (void)uart_init(UART_ID, BAUD_RATE);
     gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_TX_PIN));
     gpio_set_function(UART_RX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_RX_PIN));
@@ -63,7 +77,7 @@ static void uartTask(void *nouse)
     irq_set_enabled(UART_IRQ, true);
     uart_set_irq_enables(UART_ID, true, false);
 
-    uart_puts(UART_ID, "\nHello, uart interrupts\n");
+    uart_puts(UART_ID, "\nHello, gQueue interrupts\n");
 
     while (1)
     {
@@ -73,15 +87,40 @@ static void uartTask(void *nouse)
 
 static void onUartRx(void)
 {
+    static uint8_t step = 0U;
+    static uint8_t buff[100U] = {0U};
+    static uint8_t idx = 0U;
+    stUartCmd uartCmd;
     uart_hw_t *uart = uart_get_hw(UART_ID);
 
     while (uart_is_readable(UART_ID))
     {
         uint8_t ch = uart_getc(UART_ID);
 
-        if (uart_is_writable(UART_ID))
+        switch (ch)
         {
-            uart_putc(UART_ID, ch);
+        case '<':
+            step = 1U;
+            idx = 0U;
+            break;
+
+        case '>':
+            memcpy(&uartCmd.cmd, &buff[0U], 2U);
+            memcpy(&uartCmd.len, &buff[2U], 2U);
+            memcpy(uartCmd.data, &buff[4U], 96U);
+
+            xQueueSendToBack(gQueue, &uartCmd, 0U);
+            step = 0U;
+            idx = 0U;
+            break;
+
+        default:
+            if (0U != step)
+            {
+                buff[idx] = ch;
+                idx++;
+            }
+            break;
         }
     }
 }
