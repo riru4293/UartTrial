@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
 #include <pico/stdlib.h>
 #include <hardware/uart.h>
 #include <hardware/irq.h>
@@ -71,17 +74,72 @@ static void uartTask(void *nouse)
     }
 }
 
+#define UART_CMD_LEN_MAX (1024U)
+#define UART_CMD_START_MARK ('<')
+#define UART_CMD_END_MARK ('>')
+#define UART_CMD_CODE_POS (0U)
+#define UART_CMD_LEN_POS (2U)
+#define UART_CMD_CODE_LEN (2U)
+#define UART_CMD_LEN_LEN (2U)
+#define UART_CMD_HEAD_LEN (UART_CMD_CODE_LEN + UART_CMD_LEN_LEN)
+
 static void onUartRx(void)
 {
+    static uint16_t idx = 0U;
+    static uint8_t buff[UART_CMD_LEN_MAX];
+    static bool nowReading = false;
+    static bool isMsb = true;
+
     uart_hw_t *uart = uart_get_hw(UART_ID);
 
     while (uart_is_readable(UART_ID))
     {
         uint8_t ch = uart_getc(UART_ID);
 
-        if (uart_is_writable(UART_ID))
+        if (UART_CMD_START_MARK == ch)
         {
-            uart_putc(UART_ID, ch);
+            nowReading = true;
+            isMsb = true;
+            idx = 0U;
+        }
+        else if (nowReading)
+        {
+            if ((UART_CMD_END_MARK == ch) && isMsb && (UART_CMD_HEAD_LEN <= idx))
+            {
+                // copy to ring-buff
+                uint16_t cmd = 0U;
+                uint16_t cmdLen = 0U;
+                memcpy(&cmd, &buff[UART_CMD_CODE_POS], sizeof(cmd));
+                memcpy(&cmdLen, &buff[UART_CMD_LEN_POS], sizeof(cmdLen));
+
+                if (cmdLen == (uint16_t)(idx - UART_CMD_HEAD_LEN))
+                {
+                    printf("cmd: %04X, len: %04X, data: ", cmd, cmdLen);
+                    for (uint8_t i = 4; i < idx; i++)
+                        printf("%02X ", buff[i]);
+                    printf("\n");
+                }
+            }
+            else if (isxdigit(ch) && (UART_CMD_LEN_MAX > idx))
+            {
+                static uint8_t ascii[2];
+
+                if (true == isMsb)
+                {
+                    ascii[0] = ch;
+                }
+                else
+                {
+                    ascii[1] = ch;
+                    sscanf(ascii, "%hhX", &buff[idx++]);
+                }
+
+                isMsb = !isMsb;
+            }
+            else
+            {
+                nowReading = false;
+            }
         }
     }
 }
