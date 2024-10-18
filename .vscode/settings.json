@@ -41,7 +41,10 @@
     "raspberry-pi-pico.python3Path": "${HOME}/.pico-sdk/python/3.12.1/python.exe",
     "files.associations": {
         "*.h": "c",
-        "cstdlib": "c"
+        "cstdlib": "c",
+        "string_view": "c",
+        "array": "c",
+        "string": "c"
     },
     "cortex-debug.variableUseNaturalFormat": false
 }
