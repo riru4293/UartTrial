@@ -72,6 +72,8 @@ static uint8_t gRecvBuff[CMD_LEN_MAX] = {0U};
 
 int main(void)
 {
+    // stdio_init_all();
+
     (void)uart_init(UART_ID, UART_BAUD_RATE);
     gpio_set_function(UART_PORT_TX, UART_FUNCSEL_NUM(UART_ID, UART_PORT_TX));
     gpio_set_function(UART_PORT_RX, UART_FUNCSEL_NUM(UART_ID, UART_PORT_RX));
@@ -85,7 +87,7 @@ int main(void)
     uart_set_irq_enables(UART_ID, true, false);
 
     (void)xTaskCreate(blinkTask, "Blink", 1024, NULL, 3, &gBlinkTask);
-    (void)xTaskCreate(recvUartTask, "UartRx", 1024, NULL, 2, &gRecvUartTask);
+    // (void)xTaskCreate(recvUartTask, "UartRx", 1024, NULL, 2, &gRecvUartTask);
     (void)xTaskCreate(procCmdTask, "CmdProc", 1024, NULL, 1, &gProcCmdTask);
     vTaskStartScheduler();
 
@@ -118,25 +120,6 @@ static void blinkTask(void *nouse)
  */
 static void onRecvUart(void)
 {
-    BaseType_t hptw = pdFALSE;
-
-    /* Notify UART received */
-    vTaskNotifyGiveFromISR(gRecvUartTask, &hptw);
-
-    /* Exit to context switch if necessary */
-    portYIELD_FROM_ISR(hptw);
-}
-
-/**
- * @brief UART receive interrupt handler.
- * @details It receives data in ASCII format, converts it to binary and stores
- * it in an internal buffer. When the data stored in the internal buffer
- * is completed as one command, it moves the received command to a command
- * buffer and prepares to receive the next command.
- * @param nouse no used
- */
-static void recvUartTask(void *nouse)
-{
     /* UART control characters */
     typedef enum
     {
@@ -158,64 +141,70 @@ static void recvUartTask(void *nouse)
     static bool nowLoading = false;
     static bool isReadMsb = true;
 
-    while (true)
+    while (uart_is_readable(UART_ID))
     {
-        /* Wait receive UART */
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        /* Receive 1 character. */
+        uint8_t ch = uart_getc(UART_ID);
 
-        while (uart_is_readable(UART_ID))
+        if (E_START_MARKER == ch)
         {
-            /* Receive 1 character. */
-            uint8_t ch = uart_getc(UART_ID);
-
-            if (E_START_MARKER == ch)
+            /* Begins buffering incoming characters. */
+            nowLoading = true;
+            isReadMsb = true;
+            buffIdx = 0U;
+        }
+        else if (nowLoading)
+        {
+            if ((E_END_MARKER == ch) && (CMD_HEAD_LEN <= buffIdx) && isReadMsb)
             {
-                /* Begins buffering incoming characters. */
-                nowLoading = true;
-                isReadMsb = true;
-                buffIdx = 0U;
+                /* Moves the received contents to the command buffer */
+                /* and ends buffering of received characters.        */
+                queueCmd(buffIdx, gRecvBuff);
+                nowLoading = false;
             }
-            else if (nowLoading)
+            else if (isxdigit(ch) && (CMD_LEN_MAX > buffIdx))
             {
-                if ((E_END_MARKER == ch) && (CMD_HEAD_LEN <= buffIdx) && isReadMsb)
-                {
-                    /* Moves the received contents to the command buffer */
-                    /* and ends buffering of received characters.        */
-                    queueCmd(buffIdx, gRecvBuff);
-                    nowLoading = false;
-                }
-                else if (isxdigit(ch) && (CMD_LEN_MAX > buffIdx))
-                {
-                    static uint8_t ascii[E_ASCII_QTY];
+                static uint8_t ascii[E_ASCII_QTY];
 
-                    if (isReadMsb)
-                    {
-                        /* Stores the upper digits. */
-                        ascii[E_ASCII_MSB_POS] = ch;
-                    }
-                    else
-                    {
-                        /* Converts two characters in ASCII format to binary format. */
-                        ascii[E_ASCII_LSB_POS] = ch;
-                        sscanf(ascii, "%hhX", &gRecvBuff[buffIdx++]);
-                    }
-
-                    /* Swaps the upper and lower digits of the number to be read. */
-                    isReadMsb = !isReadMsb;
+                if (isReadMsb)
+                {
+                    /* Stores the upper digits. */
+                    ascii[E_ASCII_MSB_POS] = ch;
                 }
                 else
                 {
-                    /* Terminates buffering of incoming characters if unexpected. */
-                    nowLoading = false;
+                    /* Converts two characters in ASCII format to binary format. */
+                    ascii[E_ASCII_LSB_POS] = ch;
+                    sscanf(ascii, "%hhX", &gRecvBuff[buffIdx++]);
                 }
+
+                /* Swaps the upper and lower digits of the number to be read. */
+                isReadMsb = !isReadMsb;
+            }
+            else
+            {
+                /* Terminates buffering of incoming characters if unexpected. */
+                nowLoading = false;
             }
         }
     }
 }
 
 /**
+ * @brief UART receive interrupt handler.
+ * @details It receives data in ASCII format, converts it to binary and stores
+ * it in an internal buffer. When the data stored in the internal buffer
+ * is completed as one command, it moves the received command to a command
+ * buffer and prepares to receive the next command.
+ * @param nouse no used
+ */
+static void recvUartTask(void *nouse)
+{
+}
+
+/**
  * @brief Process command.
- * 
+ *
  * @param nouse no used
  */
 static void procCmdTask(void *nouse)
@@ -232,6 +221,7 @@ static void procCmdTask(void *nouse)
             switch (cmd.id)
             {
             case 0x1234:
+                printf("hello");
                 break;
 
             default:
@@ -281,7 +271,7 @@ static void queueCmd(const size_t n, const uint8_t cmd[n])
             gIsCmdBuffFull = (gCmdReadIdx == gCmdWriteIdx);
 
             /* Notify command received */
-            (void)xTaskNotifyGive(gRecvUartTask);
+            (void)xTaskNotifyGive(gProcCmdTask);
         }
     }
 }
@@ -307,8 +297,6 @@ static bool dequeueCmd(stCmd *cmd)
         if ((SIZE_MAX - CMD_HEAD_LEN) >= gCmdReadIdx)
         {
             uint8_t hdr[CMD_HEAD_LEN] = {0U};
-            uint16_t id = 0U;
-            uint16_t len = 0U;
             const size_t dataPos = gCmdReadIdx + CMD_HEAD_LEN;
 
             /* == Get command id and command data length. == */
@@ -317,31 +305,31 @@ static bool dequeueCmd(stCmd *cmd)
                 hdr[i] = gCmdBuff[(gCmdReadIdx + i) % CMD_BUFF_LEN];
             }
 
-            memcpy(&id, &hdr[CMD_ID_POS], CMD_ID_LEN);
-            memcpy(&len, &hdr[CMD_LEN_POS], CMD_LEN_LEN);
+            memcpy(&cmd->id, &hdr[CMD_ID_POS], CMD_ID_LEN);
+            memcpy(&cmd->len, &hdr[CMD_LEN_POS], CMD_LEN_LEN);
             /* ============================================= */
 
             /* Note: gCmdReadIdx + CMD_HEAD_LEN + dataPos is checked to ensure */
             /*       it does not overflow, but it never does.                  */
-            if ((CMD_DATA_LEN_MAX >= len) && ((SIZE_MAX - len) >= dataPos))
+            if ((CMD_DATA_LEN_MAX >= cmd->len) && ((SIZE_MAX - cmd->len) >= dataPos))
             {
                 /* == Get command data. == */
-                if (CMD_BUFF_LEN >= (dataPos + len))
+                if (CMD_BUFF_LEN >= (dataPos + cmd->len))
                 {
                     /* If it fits to the end position of the command buffer */
-                    memcpy(cmd->data, &gCmdBuff[dataPos], len);
+                    memcpy(cmd->data, &gCmdBuff[dataPos], cmd->len);
                 }
                 else
                 {
                     /* If the end of the command buffer is exceeded */
                     size_t s = CMD_BUFF_LEN - dataPos;
-                    memcpy(cmd->data, &gCmdBuff[dataPos], s); /* To end position     */
-                    memcpy(&cmd->data[s], gCmdBuff, len - s); /* From start position */
+                    memcpy(cmd->data, &gCmdBuff[dataPos], s);       /* To end position     */
+                    memcpy(&cmd->data[s], gCmdBuff, cmd->len - s);  /* From start position */
                 }
                 /* ======================= */
 
                 /* Forward the reading start position of the command buffer. */
-                gCmdReadIdx = (dataPos + len) % CMD_BUFF_LEN;
+                gCmdReadIdx = (dataPos + cmd->len) % CMD_BUFF_LEN;
 
                 /* Command buffer has free space. */
                 gIsCmdBuffFull = false;
