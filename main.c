@@ -78,6 +78,9 @@ int main(void)
     uart_set_format(UART_ID, UART_DATA_BITS, UART_STOP_BITS, UART_PARITY);
     uart_set_fifo_enabled(UART_ID, false);
     uart_set_hw_flow(UART_ID, false, false);
+
+    /* Enable UART IRQ handling */
+    irq_set_exclusive_handler(UART_IRQ, onRecvUart);
     irq_set_enabled(UART_IRQ, true);
     uart_set_irq_enables(UART_ID, true, false);
 
@@ -150,9 +153,6 @@ static void recvUartTask(void *nouse)
         E_ASCII_LSB_POS,
         E_ASCII_QTY
     } enAsciiHex;
-
-    /* Enable UART IRQ handling */
-    irq_set_exclusive_handler(UART_IRQ, onRecvUart);
 
     static size_t buffIdx = 0U;
     static bool nowLoading = false;
