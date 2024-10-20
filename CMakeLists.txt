@@ -54,6 +54,8 @@ target_link_libraries(UartTrial
     PRIVATE FreeRTOS
 )
 
+target_include_directories(UartTrial PRIVATE include)
+
 pico_set_program_name(UartTrial "UartTrial")
 pico_set_program_version(UartTrial "1.0.0")
 
