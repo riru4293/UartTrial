@@ -42,7 +42,10 @@ pico_sdk_init()
 # Include the sub modules
 add_subdirectory(FreeRTOS)
 
-add_executable(UartTrial ${CMAKE_CURRENT_LIST_DIR}/main.c)
+add_executable(UartTrial
+    ${CMAKE_CURRENT_LIST_DIR}/main.c
+    ${CMAKE_CURRENT_LIST_DIR}/UartRx.c
+)
 
 # Add the standard library to the build
 target_link_libraries(UartTrial
